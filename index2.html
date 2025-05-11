@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Riconoscimento Mela e Viso</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+  <style>
+    body {
+      text-align: center;
+      font-family: sans-serif;
+      margin: 0;
+      padding: 1rem;
+    }
+    #videoContainer {
+      position: relative;
+      width: 640px;
+      height: 480px;
+      margin: auto;
+    }
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 640px;
+      height: 480px;
+    }
+    #message {
+      font-size: 1.2rem;
+      margin-top: 1rem;
+      color: darkgreen;
+    }
+    #finale {
+      display: none;
+    }
+    #spiegazione {
+      margin-top: 1.5rem;
+      font-size: 1rem;
+      max-width: 700px;
+      margin-left: auto;
+      margin-right: auto;
+      line-height: 1.5;
+    }
+    button {
+      margin-top: 1rem;
+      padding: 10px 20px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div id="esperienza">
+  <h1>Riconoscimento Mela + Viso</h1>
+  <div id="videoContainer">
+    <video id="video" autoplay muted></video>
+    <canvas id="canvas"></canvas>
+  </div>
+  <div id="message">Caricamento...</div>
+</div>
+
+<div id="finale">
+  <h1>La tua mela digitale</h1>
+  <img id="fotoScattata" src="" alt="La tua foto con la mela" />
+  <div>
+    <a id="downloadBtn" download="mia_foto_mela.png">
+      <button>Scarica la tua foto</button>
+    </a>
+  </div>
+  <div id="spiegazione">
+    Questo progetto esplora il confine tra fisico e digitale. Per sbloccare questa pagina, hai dovuto mostrare una mela vera e metterla vicino al tuo volto, creando un momento di interazione reale. Lo scatto cattura questo gesto e lo trasforma in memoria digitale.
+  </div>
+  <button onclick="location.reload()">Ricomincia</button>
+</div>
+
+<audio id="bite" src="bite.mp3" preload="auto"></audio>
+
+<script>
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const message = document.getElementById('message');
+  const biteSound = document.getElementById('bite');
+  const esperienza = document.getElementById('esperienza');
+  const finale = document.getElementById('finale');
+  const fotoScattata = document.getElementById('fotoScattata');
+  const downloadBtn = document.getElementById('downloadBtn');
+
+  let cocoModel, faceModel;
+  let countdownInProgress = false;
+
+  async function setupCamera() {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+    video.style.display = "block";
+    return new Promise(resolve => video.onloadedmetadata = resolve);
+  }
+
+  async function loadModels() {
+    cocoModel = await cocoSsd.load();
+    faceModel = await blazeface.load();
+  }
+
+  function isCloseEnough(a, b) {
+    const ax = a.x + a.width / 2;
+    const ay = a.y + a.height / 2;
+    const bx = b.x + b.width / 2;
+    const by = b.y + b.height / 2;
+    return Math.hypot(ax - bx, ay - by) < 200;
+  }
+
+  function drawBox(x, y, w, h, color) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+  }
+
+  function startCountdown() {
+    let count = 3;
+    message.textContent = `Scatto in ${count}...`;
+    const interval = setInterval(() => {
+      count--;
+      if (count > 0) {
+        message.textContent = `Scatto in ${count}...`;
+      } else {
+        clearInterval(interval);
+        takePhoto();
+      }
+    }, 1000);
+  }
+
+  function takePhoto() {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    biteSound.play();
+    const imageDataUrl = canvas.toDataURL('image/png');
+    fotoScattata.src = imageDataUrl;
+    downloadBtn.href = imageDataUrl;
+    esperienza.style.display = "none";
+    finale.style.display = "block";
+  }
+
+  async function detectLoop() {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const [objects, faces] = await Promise.all([
+      cocoModel.detect(video),
+      faceModel.estimateFaces(video, false)
+    ]);
+
+    const apple = objects.find(o => o.class === 'apple');
+    const face = faces[0];
+
+    if (apple) drawBox(...apple.bbox, 'green');
+    if (face) {
+      const [x1, y1] = face.topLeft;
+      const [x2, y2] = face.bottomRight;
+      drawBox(x1, y1, x2 - x1, y2 - y1, 'blue');
+    }
+
+    if (apple && face && !countdownInProgress) {
+      const appleBox = { x: apple.bbox[0], y: apple.bbox[1], width: apple.bbox[2], height: apple.bbox[3] };
+      const faceBox = {
+        x: face.topLeft[0],
+        y: face.topLeft[1],
+        width: face.bottomRight[0] - face.topLeft[0],
+        height: face.bottomRight[1] - face.topLeft[1]
+      };
+
+      if (isCloseEnough(appleBox, faceBox)) {
+        countdownInProgress = true;
+        startCountdown();
+        return;
+      }
+    }
+
+    if (!countdownInProgress) {
+      message.textContent = "Inquadra una mela vera e avvicinala al tuo viso";
+    }
+
+    setTimeout(detectLoop, 500);
+  }
+
+  async function main() {
+    await setupCamera();
+    await loadModels();
+    canvas.width = 640;
+    canvas.height = 480;
+    message.textContent = "Inquadra la mela e il tuo viso";
+    detectLoop();
+  }
+
+  main();
+</script>
+
+</body>
+</html>
